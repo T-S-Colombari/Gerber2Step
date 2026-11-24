@@ -29,6 +29,12 @@ I was iterating frequently on prototype boards and got tired of manually importi
 
 ---
 
+## Recommended Print & PCB Design Settings
+
+For my prints, I used a **0.4 mm nozzle** at a **0.1 mm layer height**, with **ironing enabled on top surfaces** for the PCB (but disabled for the press stamps). Make sure your filament is dry—eliminating stringing is critical for keeping the trenches clean and isolated. In KiCad (or your preferred PCB design software), I used a minimum clearance of **0.4 mm** between traces and pads, **1.1 mm** PTH holes, **1.2 mm** trace widths on the bottom layer (printed facing up), and **1.5 mm** trace widths on the top layer (since the front copper plane was printed directly on the print bed). Using a smaller-diameter nozzle should allow you to make these features even slimmer.
+
+---
+
 ## Download (Windows `.exe`)
 
 If you don't want to install Python, grab the latest standalone Windows executable from the [**Releases**](https://github.com/T-S-Colombari/Gerber2Step/releases) page.
