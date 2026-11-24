@@ -1,0 +1,4 @@
+build123d
+shapely
+gerbonara
+pyinstaller
