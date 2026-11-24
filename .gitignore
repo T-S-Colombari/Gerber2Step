@@ -1,7 +1,8 @@
-﻿.g2s_venv/
+.g2s_venv/
 .venv/
 build/
 dist/
 __pycache__/
 *.spec
 config.txt
+gerbers/
