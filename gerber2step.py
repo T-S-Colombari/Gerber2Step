@@ -13,7 +13,7 @@ from shapely.geometry import Point, LineString, Polygon, MultiPolygon
 from shapely.ops import unary_union
 from build123d import Face, Wire, Compound, extrude, export_step
 
-# To create the standalone executable with PyInstaller, run in the cmd with the virtual environment active: 
+# To create the standalone executable with PyInstaller, run in the cmd with the virtual environment active:
 # pyinstaller --noconsole --onefile --clean --name Gerber2Step --collect-all OCP --collect-all build123d --collect-all lib3mf --collect-all gerbonara gerber2step.py
 
 # Silence harmless KiCad G90 Excellon header warnings
@@ -31,6 +31,7 @@ DEFAULTS = {
     "gerber_dir": "",
     "output_dir": "",
     "output_name": "pcb_output.step",
+    "split_pcb": "1",
     "board_thickness": "2.0",
     "top_trench": "0.3",
     "bottom_trench": "0.2",
@@ -147,6 +148,36 @@ def extrude_shapely(geom, z_start: float, height: float) -> Compound | None:
     return Compound(solids)
 
 
+def build_pcb_half(
+    board_2d: Polygon,
+    copper_2d,
+    holes_2d,
+    half_thickness: float,
+    trench_depth: float,
+    mirror: bool = False,
+) -> Compound:
+    """Build one half of a split PCB with flat glue side at Z=0 and trenches facing up."""
+    origin = board_2d.centroid
+
+    half_board = mirror_x(board_2d, origin) if mirror else board_2d
+    half_copper = mirror_x(copper_2d, origin) if mirror else copper_2d
+    half_holes = mirror_x(holes_2d, origin) if mirror else holes_2d
+
+    solid = extrude_shapely(half_board, z_start=0.0, height=half_thickness)
+
+    if half_copper is not None and not half_copper.is_empty and trench_depth > 0:
+        trench_3d = extrude_shapely(half_copper, z_start=half_thickness, height=-trench_depth)
+        if trench_3d:
+            solid = solid - trench_3d
+
+    if half_holes is not None and not half_holes.is_empty:
+        holes_3d = extrude_shapely(half_holes, z_start=-0.1, height=half_thickness + 0.2)
+        if holes_3d:
+            solid = solid - holes_3d
+
+    return solid
+
+
 def build_press_stamp(
     board_2d: Polygon,
     copper_2d,
@@ -191,6 +222,7 @@ def build_press_stamp(
 def run_conversion(
     gerber_dir: Path,
     output_step: Path,
+    split_pcb: bool,
     board_thickness: float,
     top_trench: float,
     bottom_trench: float,
@@ -214,39 +246,26 @@ def run_conversion(
     if not edge_path:
         raise RuntimeError("No *Edge_Cuts.gbr file found in the selected folder!")
 
-    # --- Board Outline ---
+    # --- Parse 2D Layers ---
     edge_layer = GerberFile.open(edge_path)
     board_2d = extract_board_outline(edge_layer, quad_segs=arc_segments)
-    log(f"Extruding board ({board_2d.area:.1f} mm², thickness={board_thickness} mm)...")
-    board_3d = extrude_shapely(board_2d, z_start=0.0, height=board_thickness)
 
     f_cu_2d = None
     b_cu_2d = None
     holes_2d = None
 
-    # --- Top Copper (F.Cu) ---
     if f_cu_path and top_trench > 0:
-        log(f"Cutting F.Cu trenches ({top_trench} mm from top)...")
         f_cu_2d = layer_to_shapely(GerberFile.open(f_cu_path), quad_segs=arc_segments)
-        f_cu_3d = extrude_shapely(f_cu_2d, z_start=board_thickness, height=-top_trench)
-        if f_cu_3d:
-            board_3d = board_3d - f_cu_3d
     elif not f_cu_path:
         log("F.Cu not found — skipping top trenches.")
 
-    # --- Bottom Copper (B.Cu) ---
     if b_cu_path and bottom_trench > 0:
-        log(f"Cutting B.Cu trenches ({bottom_trench} mm from bottom)...")
         b_cu_2d = layer_to_shapely(GerberFile.open(b_cu_path), quad_segs=arc_segments)
-        b_cu_3d = extrude_shapely(b_cu_2d, z_start=0.0, height=bottom_trench)
-        if b_cu_3d:
-            board_3d = board_3d - b_cu_3d
     elif not b_cu_path:
         log("B.Cu not found — skipping bottom trenches.")
 
-    # --- Drill Holes (.drl) ---
     if drl_paths:
-        log(f"Cutting drill holes (+{hole_tolerance} mm dia tolerance)...")
+        log(f"Loading drill holes (+{hole_tolerance} mm dia tolerance)...")
         drill_geoms = [
             layer_to_shapely(ExcellonFile.open(p), extra_radius=hole_tolerance / 2, quad_segs=arc_segments)
             for p in drl_paths
@@ -254,23 +273,78 @@ def run_conversion(
         valid_drills = [g for g in drill_geoms if g is not None and not g.is_empty]
         if valid_drills:
             holes_2d = unary_union(valid_drills)
-            holes_3d = extrude_shapely(holes_2d, z_start=-0.1, height=board_thickness + 0.2)
-            if holes_3d:
-                board_3d = board_3d - holes_3d
     else:
         log("No .drl file found — skipping drill holes.")
 
-    # --- Export PCB STEP ---
     output_step.parent.mkdir(parents=True, exist_ok=True)
-    log(f"Exporting PCB STEP to: {output_step.name}")
-    export_step(board_3d, str(output_step))
+    stem = output_step.stem
+    suffix = output_step.suffix
+    exported_files = []
 
-    exported_files = [output_step.name]
+    # --- Build & Export PCB ---
+    if split_pcb:
+        half_thickness = board_thickness / 2.0
+        log(f"Split mode: building two {half_thickness:.2f} mm halves ({board_2d.area:.1f} mm²)...")
+
+        if f_cu_2d is not None:
+            top_path = output_step.with_name(f"{stem}_top{suffix}")
+            log(f"Building Top Half — F.Cu (trench={top_trench} mm, trenches facing up)...")
+            top_half_3d = build_pcb_half(
+                board_2d=board_2d,
+                copper_2d=f_cu_2d,
+                holes_2d=holes_2d,
+                half_thickness=half_thickness,
+                trench_depth=top_trench,
+                mirror=False,
+            )
+            log(f"Exporting: {top_path.name}")
+            export_step(top_half_3d, str(top_path))
+            exported_files.append(top_path.name)
+
+        if b_cu_2d is not None:
+            bot_path = output_step.with_name(f"{stem}_bottom{suffix}")
+            log(f"Building Bottom Half — B.Cu (mirrored, trench={bottom_trench} mm, trenches facing up)...")
+            bot_half_3d = build_pcb_half(
+                board_2d=board_2d,
+                copper_2d=b_cu_2d,
+                holes_2d=holes_2d,
+                half_thickness=half_thickness,
+                trench_depth=bottom_trench,
+                mirror=True,
+            )
+            log(f"Exporting: {bot_path.name}")
+            export_step(bot_half_3d, str(bot_path))
+            exported_files.append(bot_path.name)
+
+        if not exported_files:
+            raise RuntimeError("No F.Cu or B.Cu copper layers found to generate split halves.")
+    else:
+        log(f"Single-solid mode: extruding board ({board_2d.area:.1f} mm², thickness={board_thickness} mm)...")
+        board_3d = extrude_shapely(board_2d, z_start=0.0, height=board_thickness)
+
+        if f_cu_2d is not None:
+            log(f"Cutting F.Cu trenches ({top_trench} mm from top)...")
+            f_cu_3d = extrude_shapely(f_cu_2d, z_start=board_thickness, height=-top_trench)
+            if f_cu_3d:
+                board_3d = board_3d - f_cu_3d
+
+        if b_cu_2d is not None:
+            log(f"Cutting B.Cu trenches ({bottom_trench} mm from bottom)...")
+            b_cu_3d = extrude_shapely(b_cu_2d, z_start=0.0, height=bottom_trench)
+            if b_cu_3d:
+                board_3d = board_3d - b_cu_3d
+
+        if holes_2d is not None:
+            holes_3d = extrude_shapely(holes_2d, z_start=-0.1, height=board_thickness + 0.2)
+            if holes_3d:
+                board_3d = board_3d - holes_3d
+
+        log(f"Exporting PCB STEP to: {output_step.name}")
+        export_step(board_3d, str(output_step))
+        exported_files.append(output_step.name)
 
     # --- Export Positive Press Stamps ---
     if generate_stamps:
-        stem = output_step.stem
-        suffix = output_step.suffix
         stamp_holes = None if stamp_exclude_holes else holes_2d
         holes_note = ", no holes" if stamp_exclude_holes else ""
 
@@ -340,10 +414,11 @@ class Gerber2StepApp:
         self.root.resizable(False, False)
 
         cfg = load_config()
-        bool_keys = {"generate_stamps", "stamp_exclude_holes"}
+        bool_keys = {"split_pcb", "generate_stamps", "stamp_exclude_holes"}
         self.vars = {k: tk.StringVar(value=v) for k, v in cfg.items() if k not in bool_keys}
+        self.split_pcb_var = tk.BooleanVar(value=cfg.get("split_pcb", "1") == "1")
         self.generate_stamps_var = tk.BooleanVar(value=cfg.get("generate_stamps", "1") == "1")
-        self.stamp_exclude_holes_var = tk.BooleanVar(value=cfg.get("stamp_exclude_holes", "0") == "1")
+        self.stamp_exclude_holes_var = tk.BooleanVar(value=cfg.get("stamp_exclude_holes", "1") == "1")
 
         main_frame = ttk.Frame(root, padding=14)
         main_frame.grid(row=0, column=0, sticky="nsew")
@@ -364,14 +439,20 @@ class Gerber2StepApp:
         param_frame = ttk.LabelFrame(main_frame, text="PCB Parameters", padding=10)
         param_frame.grid(row=1, column=0, sticky="ew", pady=(0, 10))
 
+        ttk.Checkbutton(
+            param_frame,
+            text="Split PCB into Top & Bottom Halves (No Bridging)",
+            variable=self.split_pcb_var,
+        ).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 6))
+
         params = [
-            ("Board Thickness (mm):", "board_thickness"),
+            ("Total Board Thickness (mm):", "board_thickness"),
             ("Top Trench Depth — F.Cu (mm):", "top_trench"),
             ("Bottom Trench Depth — B.Cu (mm):", "bottom_trench"),
             ("Hole Dia. Tolerance (mm):", "hole_tolerance"),
             ("Arc Segments (per 90°):", "arc_segments"),
         ]
-        for idx, (label, key) in enumerate(params):
+        for idx, (label, key) in enumerate(params, start=1):
             ttk.Label(param_frame, text=label).grid(row=idx, column=0, sticky="w", pady=3)
             ttk.Entry(param_frame, textvariable=self.vars[key], width=12).grid(
                 row=idx, column=1, sticky="w", padx=(12, 0), pady=3
@@ -447,6 +528,7 @@ class Gerber2StepApp:
 
     def on_save_defaults(self):
         cfg = {k: v.get().strip() for k, v in self.vars.items()}
+        cfg["split_pcb"] = "1" if self.split_pcb_var.get() else "0"
         cfg["generate_stamps"] = "1" if self.generate_stamps_var.get() else "0"
         cfg["stamp_exclude_holes"] = "1" if self.stamp_exclude_holes_var.get() else "0"
         save_config(cfg)
@@ -493,6 +575,7 @@ class Gerber2StepApp:
                 files = run_conversion(
                     gerber_dir=Path(gerber_str),
                     output_step=Path(output_str) / output_name,
+                    split_pcb=self.split_pcb_var.get(),
                     board_thickness=board_thickness,
                     top_trench=top_trench,
                     bottom_trench=bottom_trench,
