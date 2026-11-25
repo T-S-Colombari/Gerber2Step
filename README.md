@@ -10,7 +10,7 @@ I was iterating frequently on prototype boards and got tired of manually importi
 
 > **AI / Code Disclaimer:** While I have experience with Python, I do not have prior experience with the 3D/CAD libraries used under the hood (`build123d`, `shapely`, `gerbonara`). This application was built with AI assistance ("vibe coded") to solve a practical prototyping bottleneck. It works reliably for my workflow, and PRs, bug reports, or improvements from people who know these libraries well are very welcome!
 
-> **⚠️ Safety Disclaimer (Sanding Copper & 3D-Printed Parts):**
+> **Safety Disclaimer (Sanding Copper & 3D-Printed Parts):**
 > Although this method avoids chemical etchants, **sanding copper tape and 3D-printed plastics (PLA, PETG, or resin) generates fine metallic and microplastic dust** that can irritate your lungs, eyes, and skin.
 > * **Wet sand whenever possible:** Wetting the sandpaper traps most copper and plastic particles in a slurry, preventing them from becoming airborne (and keeping the plastic from melting).
 > * **Wear PPE:** Wear a particulate respirator (**N95/P2 or P100**)—especially if dry-sanding, using power tools, or sanding cured resin/fiber-filled prints—along with eye protection and nitrile gloves (or wash your hands thoroughly with soap and water afterward).
