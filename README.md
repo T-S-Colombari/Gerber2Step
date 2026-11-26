@@ -8,7 +8,7 @@ This tool was built to automate the chemical-free 3D-printed PCB fabrication met
 
 I was iterating frequently on prototype boards and got tired of manually importing sketches and extruding trenches in CAD every time I changed a trace. **Gerber2Step** turns that repetitive CAD workflow into a one-click export straight from KiCad Gerbers to native `.step` files.
 
-> **AI / Code Disclaimer:** While I have experience with Python, I do not have prior experience with the 3D/CAD libraries used under the hood (`build123d`, `shapely`, `gerbonara`). This application was built with AI assistance ("vibe coded") to solve a practical prototyping bottleneck. It works reliably for my workflow, and PRs, bug reports, or improvements from people who know these libraries well are very welcome!
+> **AI / Code Disclaimer:** While I have experience with Python, I do not have prior experience with the 3D/CAD libraries used under the hood (`build123d`, `shapely`, `gerbonara`). This application was built with AI assistance to solve a practical prototyping problem faster. It works reliably for my workflow, and PRs, bug reports, or improvements from people who know these libraries well are very welcome!
 
 > **Safety Disclaimer (Sanding Copper & 3D-Printed Parts):**
 > Although this method avoids chemical etchants, **sanding copper tape and 3D-printed plastics (PLA, PETG, or resin) generates fine metallic and microplastic dust** that can irritate your lungs, eyes, and skin.
